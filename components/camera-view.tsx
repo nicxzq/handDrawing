@@ -18,356 +18,268 @@ interface GestureData {
   isDrawing?: boolean
 }
 
-interface HandLandmark {
-  x: number
-  y: number
-  z?: number
-}
-
 export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
+  const overlayRef = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [currentGesture, setCurrentGesture] = useState<GestureData | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
-  const processingRef = useRef(false)
-  const lastProcessTimeRef = useRef(0)
   const [isPinching, setIsPinching] = useState(false)
   const [palmPosition, setPalmPosition] = useState<{ x: number; y: number } | null>(null)
-  const lastPalmPositionRef = useRef<{ x: number; y: number } | null>(null)
-  const [fingerTips, setFingerTips] = useState<{ x: number; y: number }[]>([])
 
+  // Hysteresis / debounce state
+  const pinchFramesRef = useRef(0)
+  const releaseFramesRef = useRef(0)
+
+  // Load MediaPipe Hands via CDN once
   useEffect(() => {
     let stream: MediaStream | null = null
+    let camera: any = null
+    let hands: any = null
+    let cancelled = false
 
-    const startCamera = async () => {
+    const loadScript = (src: string) =>
+      new Promise<void>((resolve, reject) => {
+        const existed = document.querySelector(`script[src="${src}"]`)
+        if (existed) {
+          resolve()
+          return
+        }
+        const s = document.createElement("script")
+        s.src = src
+        s.async = true
+        s.onload = () => resolve()
+        s.onerror = () => reject(new Error(`Failed to load ${src}`))
+        document.head.appendChild(s)
+      })
+
+    const init = async () => {
       try {
         setIsLoading(true)
         setError(null)
 
+        // Request camera first so user can grant permission early
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: "user",
-          },
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+          audio: false,
+        })
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+        }
+
+        // Load MediaPipe Hands libs
+        await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js")
+        await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js")
+        await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js")
+        if (cancelled) return
+
+        const mpHands = (window as any).Hands
+        const mpCamera = (window as any).Camera
+        const mpDraw = (window as any).drawConnectors
+        const mpLandmarks = (window as any).HAND_CONNECTIONS
+
+        if (!mpHands || !mpCamera) throw new Error("MediaPipe Hands not available")
+
+        hands = new mpHands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` })
+        hands.setOptions({
+          maxNumHands: 1,
+          minDetectionConfidence: 0.6,
+          minTrackingConfidence: 0.6,
+          modelComplexity: 1,
+        })
+
+        hands.onResults((results: any) => {
+          if (cancelled) return
+          setIsProcessing(true)
+          try {
+            handleResults(results, mpDraw, mpLandmarks)
+          } finally {
+            setIsProcessing(false)
+          }
         })
 
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play()
+          camera = new mpCamera(videoRef.current, {
+            onFrame: async () => {
+              if (!hands || !videoRef.current) return
+              await hands.send({ image: videoRef.current })
+            },
+            width: 640,
+            height: 480,
+          })
+          camera.start()
         }
 
         setIsLoading(false)
-        console.log("[v0] Camera initialized for palm tracking")
-      } catch (err) {
-        console.error("[v0] Camera access error:", err)
-        setError("Unable to access camera. Please ensure camera permissions are granted.")
+      } catch (e: any) {
+        console.error("[hands] init error", e)
+        setError(e?.message || "Camera/Hand tracking initialization failed")
         setIsLoading(false)
       }
     }
 
-    startCamera()
+    init()
 
     return () => {
+      cancelled = true
+      try {
+        if (camera?.stop) camera.stop()
+      } catch {}
       if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
+        stream.getTracks().forEach((t) => t.stop())
       }
     }
   }, [])
 
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout
+  const handleResults = (results: any, drawConnectors: any, HAND_CONNECTIONS: any) => {
+    const overlay = overlayRef.current
+    const video = videoRef.current
+    if (!overlay || !video) return
 
-    const detectHandGestures = () => {
-      const now = Date.now()
-      if (processingRef.current || now - lastProcessTimeRef.current < 100) {
-        return
-      }
-
-      if (!videoRef.current || !canvasRef.current) return
-
-      const video = videoRef.current
-      const procCanvas = canvasRef.current
-      const procCtx = procCanvas.getContext("2d")
-
-      if (!procCtx || video.videoWidth === 0 || video.videoHeight === 0) return
-
-      try {
-        processingRef.current = true
-        setIsProcessing(true)
-        lastProcessTimeRef.current = now
-
-        procCanvas.width = video.videoWidth
-        procCanvas.height = video.videoHeight
-
-        procCtx.drawImage(video, 0, 0, procCanvas.width, procCanvas.height)
-        const imageData = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height)
-
-        const handData = detectPalmAndPinch(imageData, procCanvas.width, procCanvas.height)
-
-        if (handData) {
-          console.log("[v0] Hand detected:", handData.type, "at", handData.position, "pinching:", handData.isPinching)
-
-          const gestureData: GestureData = {
-            type: handData.type,
-            confidence: handData.confidence,
-            position: handData.position,
-            timestamp: now,
-            isDrawing: handData.isPinching,
-          }
-
-          setCurrentGesture(gestureData)
-          setPalmPosition(handData.position)
-          setIsPinching(handData.isPinching)
-          setFingerTips(handData.fingerTips || [])
-          onGestureDetected(gestureData)
-
-          if (isDrawingMode) {
-            handlePalmDrawing(handData)
-          }
-
-          drawOverlay(procCanvas.width, procCanvas.height, handData)
-        } else {
-          if (isPinching && isDrawingMode) {
-            console.log("[v0] Hand lost, stopping drawing")
-            setIsPinching(false)
-            triggerDrawEnd()
-          }
-          setPalmPosition(null)
-          setFingerTips([])
-          clearOverlay()
-        }
-      } catch (error) {
-        console.error("[v0] Hand detection error:", error)
-      } finally {
-        processingRef.current = false
-        setIsProcessing(false)
-      }
-    }
-
-    intervalId = setInterval(detectHandGestures, 100)
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
-      }
-    }
-  }, [onGestureDetected, isDrawingMode, isPinching])
-
-  const detectPalmAndPinch = (imageData: ImageData, width: number, height: number) => {
-    const data = imageData.data
-    const skinPixels: { x: number; y: number; intensity: number }[] = []
-
-    for (let y = 0; y < height; y += 4) {
-      for (let x = 0; x < width; x += 4) {
-        const i = (y * width + x) * 4
-        const r = data[i]
-        const g = data[i + 1]
-        const b = data[i + 2]
-
-        if (r > 95 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 15 && r - g > 15 && r + g + b > 200) {
-          const intensity = (r + g + b) / 3
-          skinPixels.push({ x, y, intensity })
-        }
-      }
-    }
-
-    if (skinPixels.length < 100) return null
-
-    let palmX = 0
-    let palmY = 0
-    let totalIntensity = 0
-
-    skinPixels.forEach((pixel) => {
-      palmX += pixel.x * pixel.intensity
-      palmY += pixel.y * pixel.intensity
-      totalIntensity += pixel.intensity
-    })
-
-    palmX /= totalIntensity
-    palmY /= totalIntensity
-
-    const fingerRegions = detectFingerRegions(skinPixels, palmX, palmY, width, height)
-
-    // Build fingertip candidates per sector: farthest pixel from palm within ring
-    const fingerTips = fingerRegions.sectorTips
-
-    // Heuristic: choose the two closest fingertip candidates in the upper half as thumb/index approximation
-    const upperTips = fingerTips.filter((t) => t && t.y < palmY)
-    let minDist = Infinity
-    let pair: { a: { x: number; y: number }; b: { x: number; y: number } } | null = null
-    for (let i = 0; i < upperTips.length; i++) {
-      for (let j = i + 1; j < upperTips.length; j++) {
-        const dx = (upperTips[i]!.x - upperTips[j]!.x)
-        const dy = (upperTips[i]!.y - upperTips[j]!.y)
-        const d = Math.sqrt(dx * dx + dy * dy)
-        if (d < minDist) {
-          minDist = d
-          pair = { a: upperTips[i]!, b: upperTips[j]! }
-        }
-      }
-    }
-
-    const pinchThreshold = Math.min(width, height) * 0.07
-    const isPinching = pair ? minDist < pinchThreshold : fingerRegions.extendedFingers < 3
-    const isOpenPalm = fingerRegions.extendedFingers >= 4
-
-    console.log("[v0] Finger analysis:", fingerRegions.extendedFingers, "extended fingers, pinchDist:", minDist)
-
-    return {
-      type: isPinching ? "pinch" : isOpenPalm ? "open_palm" : "partial_hand",
-      confidence: Math.min(0.9, skinPixels.length / 500),
-      position: {
-        x: palmX / width,
-        y: palmY / height,
-      },
-      isPinching,
-      fingerCount: fingerRegions.extendedFingers,
-      fingerTips: fingerTips.filter(Boolean) as { x: number; y: number }[],
-      palm: { x: palmX, y: palmY },
-      pinchPair: pair,
-    }
-  }
-
-  const detectFingerRegions = (
-    skinPixels: { x: number; y: number; intensity: number }[],
-    palmX: number,
-    palmY: number,
-    width: number,
-    height: number,
-  ) => {
-    const sectors = 8
-    const sectorCounts = new Array(sectors).fill(0)
-    const sectorTips: Array<{ x: number; y: number } | null> = new Array(sectors).fill(null)
-    const radius = Math.min(width, height) * 0.15
-
-    skinPixels.forEach((pixel) => {
-      const dx = pixel.x - palmX
-      const dy = pixel.y - palmY
-      const distance = Math.sqrt(dx * dx + dy * dy)
-
-      if (distance > radius * 0.5 && distance < radius * 1.8) {
-        const angle = Math.atan2(dy, dx)
-        const sectorIndex = Math.floor(((angle + Math.PI) / (2 * Math.PI)) * sectors) % sectors
-        sectorCounts[sectorIndex]++
-        const tip = sectorTips[sectorIndex]
-        if (!tip || distance > Math.sqrt((tip.x - palmX) * (tip.x - palmX) + (tip.y - palmY) * (tip.y - palmY))) {
-          sectorTips[sectorIndex] = { x: pixel.x, y: pixel.y }
-        }
-      }
-    })
-
-    const threshold = Math.max(10, skinPixels.length * 0.02)
-    const extendedFingers = sectorCounts.filter((count) => count > threshold).length
-
-    return { extendedFingers, sectorCounts, sectorTips }
-  }
-
-  const drawOverlay = (width: number, height: number, handData: any) => {
-    const overlay = overlayCanvasRef.current
-    if (!overlay) return
-    overlay.width = width
-    overlay.height = height
+    // Fit overlay to displayed video size
+    const rect = video.getBoundingClientRect()
+    overlay.width = Math.max(1, Math.floor(rect.width))
+    overlay.height = Math.max(1, Math.floor(rect.height))
     const ctx = overlay.getContext("2d")
     if (!ctx) return
 
-    ctx.clearRect(0, 0, width, height)
-
-    // Draw palm
-    if (handData.palm) {
-      ctx.fillStyle = "rgba(0, 122, 255, 0.8)"
-      ctx.beginPath()
-      ctx.arc(handData.palm.x, handData.palm.y, 6, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    // Draw finger rays
-    ctx.strokeStyle = handData.isPinching ? "rgba(16, 185, 129, 0.9)" : "rgba(255, 255, 255, 0.6)"
-    ctx.lineWidth = 2
-    ;(handData.fingerTips as { x: number; y: number }[]).forEach((tip: any) => {
-      ctx.beginPath()
-      ctx.moveTo(handData.palm.x, handData.palm.y)
-      ctx.lineTo(tip.x, tip.y)
-      ctx.stroke()
-
-      ctx.fillStyle = "rgba(255,255,255,0.9)"
-      ctx.beginPath()
-      ctx.arc(tip.x, tip.y, 4, 0, Math.PI * 2)
-      ctx.fill()
-    })
-
-    // Draw pinch link if available
-    if (handData.pinchPair) {
-      ctx.strokeStyle = "rgba(16, 185, 129, 0.9)"
-      ctx.lineWidth = 3
-      ctx.beginPath()
-      ctx.moveTo(handData.pinchPair.a.x, handData.pinchPair.a.y)
-      ctx.lineTo(handData.pinchPair.b.x, handData.pinchPair.b.y)
-      ctx.stroke()
-    }
-  }
-
-  const clearOverlay = () => {
-    const overlay = overlayCanvasRef.current
-    if (!overlay) return
-    const ctx = overlay.getContext("2d")
-    if (!ctx) return
     ctx.clearRect(0, 0, overlay.width, overlay.height)
-  }
 
-  const handlePalmDrawing = (handData: any) => {
-    const canvas = document.querySelector("canvas")
-    if (!canvas) return
+    const landmarks: any[] = results.multiHandLandmarks?.[0] || []
 
-    const rect = canvas.getBoundingClientRect()
-    const x = handData.position.x * rect.width
-    const y = handData.position.y * rect.height
-
-    console.log("[v0] Palm at:", x, y, "pinching:", handData.isPinching, "was pinching:", isPinching)
-
-    if (handData.isPinching && !isPinching) {
-      console.log("[v0] Pinch detected, starting to draw")
-      triggerDrawStart(x, y)
-    } else if (handData.isPinching && isPinching) {
-      console.log("[v0] Continuing to draw while pinching")
-      triggerDrawMove(x, y)
-    } else if (!handData.isPinching && isPinching) {
-      console.log("[v0] Pinch released, stopping drawing")
-      triggerDrawEnd()
+    if (!landmarks || landmarks.length === 0) {
+      // No hand: ensure end drawing if currently pinching
+      if (isPinching) {
+        const { x, y } = getCanvasCenterCoords()
+        triggerDrawEnd()
+        setIsPinching(false)
+        setCurrentGesture(null)
+        setPalmPosition(null)
+      }
+      return
     }
 
-    triggerCursorMove(x, y)
+    // MediaPipe provides normalized [0..1] coordinates
+    const toOverlay = (p: any) => ({ x: p.x * overlay.width, y: p.y * overlay.height })
+
+    // Draw skeleton overlay
+    try {
+      if (drawConnectors) {
+        drawConnectors(ctx, landmarks.map(toOverlay), HAND_CONNECTIONS, { color: "#10b981", lineWidth: 2 })
+      }
+      landmarks.forEach((p: any) => {
+        const { x, y } = toOverlay(p)
+        ctx.fillStyle = "rgba(255,255,255,0.9)"
+        ctx.beginPath()
+        ctx.arc(x, y, 3, 0, Math.PI * 2)
+        ctx.fill()
+      })
+    } catch {}
+
+    // Pinch detection between Thumb tip (4) and Index tip (8)
+    const thumb = toOverlay(landmarks[4])
+    const index = toOverlay(landmarks[8])
+
+    const dx = thumb.x - index.x
+    const dy = thumb.y - index.y
+    const pinchDist = Math.hypot(dx, dy)
+
+    // Dynamic threshold based on hand size: distance between wrist(0) and middle knuckle(9)
+    const wrist = toOverlay(landmarks[0])
+    const middleBase = toOverlay(landmarks[9])
+    const handScale = Math.max(20, Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y))
+
+    const startThreshold = handScale * 0.35 // stricter to start
+    const endThreshold = handScale * 0.55 // looser to end
+
+    let nextPinching = isPinching
+    if (pinchDist < startThreshold) {
+      pinchFramesRef.current += 1
+      releaseFramesRef.current = 0
+      if (!isPinching && pinchFramesRef.current >= 2) nextPinching = true
+    } else if (pinchDist > endThreshold) {
+      releaseFramesRef.current += 1
+      pinchFramesRef.current = 0
+      if (isPinching && releaseFramesRef.current >= 2) nextPinching = false
+    } else {
+      pinchFramesRef.current = 0
+      releaseFramesRef.current = 0
+    }
+
+    // Use index fingertip as cursor position
+    const cursor = index
+
+    // Map overlay coords to drawing canvas coords
+    const { canvasX, canvasY } = mapToDrawingCanvas(cursor.x, cursor.y, video)
+
+    // Update badges
+    const gestureData: GestureData = {
+      type: nextPinching ? "pinch" : "open_palm",
+      confidence: 0.9,
+      position: { x: canvasX / Math.max(1, getDrawingCanvasRect().width), y: canvasY / Math.max(1, getDrawingCanvasRect().height) },
+      timestamp: Date.now(),
+      isDrawing: nextPinching,
+    }
+    setCurrentGesture(gestureData)
+    setPalmPosition({ x: cursor.x / overlay.width, y: cursor.y / overlay.height })
+
+    // Drive drawing
+    if (isDrawingMode) {
+      if (nextPinching && !isPinching) {
+        triggerDrawStart(canvasX, canvasY)
+      } else if (nextPinching && isPinching) {
+        triggerDrawMove(canvasX, canvasY)
+      } else if (!nextPinching && isPinching) {
+        triggerDrawEnd()
+      }
+    }
+
+    setIsPinching(nextPinching)
+
+    // Visualize pinch line
+    ctx.strokeStyle = nextPinching ? "#10b981" : "rgba(255,255,255,0.6)"
+    ctx.lineWidth = nextPinching ? 3 : 2
+    ctx.beginPath()
+    ctx.moveTo(thumb.x, thumb.y)
+    ctx.lineTo(index.x, index.y)
+    ctx.stroke()
+  }
+
+  const getDrawingCanvasRect = () => {
+    const drawingCanvas = document.querySelector("canvas.touch-none") as HTMLCanvasElement | null
+    if (drawingCanvas) return drawingCanvas.getBoundingClientRect()
+    // Fallback to viewport size
+    return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as any
+  }
+
+  const getCanvasCenterCoords = () => {
+    const rect = getDrawingCanvasRect()
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+  }
+
+  const mapToDrawingCanvas = (overlayX: number, overlayY: number, videoEl: HTMLVideoElement) => {
+    const videoRect = videoEl.getBoundingClientRect()
+    const normX = (overlayX - 0) / Math.max(1, videoRect.width)
+    const normY = (overlayY - 0) / Math.max(1, videoRect.height)
+
+    const canvasRect = getDrawingCanvasRect()
+    const canvasX = canvasRect.left + normX * canvasRect.width
+    const canvasY = canvasRect.top + normY * canvasRect.height
+
+    // Return canvas-local coordinates expected by DrawingCanvas
+    return { canvasX: canvasX - canvasRect.left, canvasY: canvasY - canvasRect.top }
   }
 
   const triggerDrawStart = (x: number, y: number) => {
-    window.dispatchEvent(
-      new CustomEvent("gestureDrawStart", {
-        detail: { x, y, tool: "brush" },
-      }),
-    )
+    window.dispatchEvent(new CustomEvent("canvasDrawStart", { detail: { x, y, tool: "brush" } }))
   }
-
   const triggerDrawMove = (x: number, y: number) => {
-    window.dispatchEvent(
-      new CustomEvent("gestureDrawMove", {
-        detail: { x, y },
-      }),
-    )
+    window.dispatchEvent(new CustomEvent("canvasDrawMove", { detail: { x, y } }))
   }
-
   const triggerDrawEnd = () => {
-    window.dispatchEvent(new CustomEvent("gestureDrawEnd"))
-  }
-
-  const triggerCursorMove = (x: number, y: number) => {
-    window.dispatchEvent(
-      new CustomEvent("gestureCursorMove", {
-        detail: { x, y },
-      }),
-    )
+    window.dispatchEvent(new CustomEvent("canvasDrawEnd"))
   }
 
   if (error) {
@@ -393,8 +305,7 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
       )}
 
       <video ref={videoRef} className="w-full h-full object-cover opacity-20" autoPlay muted playsInline />
-      <canvas ref={canvasRef} className="hidden" />
-      <canvas ref={overlayCanvasRef} className="absolute inset-0 pointer-events-none" />
+      <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
 
       <div className="absolute top-4 left-4 z-20 space-y-2">
         {currentGesture && (
@@ -406,21 +317,15 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground">Gesture:</span>
-                <Badge variant="secondary" className="text-xs">
-                  {currentGesture.type.replace("_", " ")}
-                </Badge>
+                <Badge variant="secondary" className="text-xs">{currentGesture.type.replace("_", " ")}</Badge>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground">Pinching:</span>
-                <Badge variant={isPinching ? "default" : "secondary"} className="text-xs">
-                  {isPinching ? "Yes" : "No"}
-                </Badge>
+                <Badge variant={isPinching ? "default" : "secondary"} className="text-xs">{isPinching ? "Yes" : "No"}</Badge>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground">Drawing:</span>
-                <Badge variant={isPinching ? "default" : "secondary"} className="text-xs">
-                  {isPinching ? "Active" : "Inactive"}
-                </Badge>
+                <Badge variant={isPinching ? "default" : "secondary"} className="text-xs">{isPinching ? "Active" : "Inactive"}</Badge>
               </div>
             </div>
           </div>
@@ -434,29 +339,6 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
             </div>
           </div>
         )}
-      </div>
-
-      <div className="absolute bottom-4 left-4 z-20">
-        <div className="bg-card/90 backdrop-blur-sm rounded-lg p-3 border max-w-xs">
-          <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-            <Hand className="w-4 h-4" />
-            Palm Drawing Controls
-          </h4>
-          <div className="space-y-1 text-xs text-muted-foreground">
-            <div>
-              ✋ <strong>Open Palm:</strong> Move cursor
-            </div>
-            <div>
-              🤏 <strong>Pinch (thumb + index):</strong> Start drawing
-            </div>
-            <div>
-              ✋ <strong>Release Pinch:</strong> Stop drawing
-            </div>
-            <div className="text-xs text-muted-foreground mt-2 italic">
-              Keep your palm facing the camera for best tracking
-            </div>
-          </div>
-        </div>
       </div>
 
       {palmPosition && (
