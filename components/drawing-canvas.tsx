@@ -609,38 +609,47 @@ export function DrawingCanvas({
   )
 
   useEffect(() => {
+    // Handlers for gesture-based events (gated by isGestureDrawing)
     const handleGestureDrawStart = (event: CustomEvent) => {
       if (!isGestureDrawing) {
         console.log("[v0] Gesture drawing disabled, ignoring start event")
         return
       }
-      const { x, y, tool: gestureTool } = event.detail
+      const { x, y } = event.detail
       setIsGestureDrawingActive(true)
-      console.log("[v0] Gesture drawing started at:", x, y, "isGestureDrawing:", isGestureDrawing)
       startDrawing(x, y)
     }
 
     const handleGestureDrawMove = (event: CustomEvent) => {
       if (!isGestureDrawing || !isGestureDrawingActive) {
-        console.log("[v0] Gesture drawing not active, ignoring move event")
         return
       }
       const { x, y } = event.detail
-      console.log("[v0] Gesture drawing move to:", x, y, "isDrawing:", isDrawing)
       draw(x, y)
     }
 
     const handleGestureDrawEnd = () => {
       if (!isGestureDrawing || !isGestureDrawingActive) {
-        console.log("[v0] Gesture drawing not active, ignoring end event")
         return
       }
       setIsGestureDrawingActive(false)
-      console.log("[v0] Gesture drawing ended")
       stopDrawing()
     }
 
-    // ... existing event handlers ...
+    // Handlers for canvas-based events (ALWAYS honored)
+    const handleCanvasDrawStart = (event: CustomEvent) => {
+      const { x, y } = event.detail
+      startDrawing(x, y)
+    }
+
+    const handleCanvasDrawMove = (event: CustomEvent) => {
+      const { x, y } = event.detail
+      draw(x, y)
+    }
+
+    const handleCanvasDrawEnd = () => {
+      stopDrawing()
+    }
 
     const handleFloodFillRequest = () => {
       console.log("[v0] Flood fill tool activated")
@@ -670,18 +679,28 @@ export function DrawingCanvas({
       console.log("[v0] Pending shape set:", event.detail.name)
     }
 
-    window.addEventListener("canvasDrawStart", handleGestureDrawStart as EventListener)
-    window.addEventListener("canvasDrawMove", handleGestureDrawMove as EventListener)
-    window.addEventListener("canvasDrawEnd", handleGestureDrawEnd as EventListener)
+    window.addEventListener("gestureDrawStart", handleGestureDrawStart as EventListener)
+    window.addEventListener("gestureDrawMove", handleGestureDrawMove as EventListener)
+    window.addEventListener("gestureDrawEnd", handleGestureDrawEnd as EventListener)
+
+    window.addEventListener("canvasDrawStart", handleCanvasDrawStart as EventListener)
+    window.addEventListener("canvasDrawMove", handleCanvasDrawMove as EventListener)
+    window.addEventListener("canvasDrawEnd", handleCanvasDrawEnd as EventListener)
+
     window.addEventListener("floodFillRequested", handleFloodFillRequest)
     window.addEventListener("colorPicked", handleColorPicked as EventListener)
     window.addEventListener("importImage", handleImportImage as EventListener)
     window.addEventListener("shapeSelected", handleShapeSelect as EventListener)
 
     return () => {
-      window.removeEventListener("canvasDrawStart", handleGestureDrawStart as EventListener)
-      window.removeEventListener("canvasDrawMove", handleGestureDrawMove as EventListener)
-      window.removeEventListener("canvasDrawEnd", handleGestureDrawEnd as EventListener)
+      window.removeEventListener("gestureDrawStart", handleGestureDrawStart as EventListener)
+      window.removeEventListener("gestureDrawMove", handleGestureDrawMove as EventListener)
+      window.removeEventListener("gestureDrawEnd", handleGestureDrawEnd as EventListener)
+
+      window.removeEventListener("canvasDrawStart", handleCanvasDrawStart as EventListener)
+      window.removeEventListener("canvasDrawMove", handleCanvasDrawMove as EventListener)
+      window.removeEventListener("canvasDrawEnd", handleCanvasDrawEnd as EventListener)
+
       window.removeEventListener("floodFillRequested", handleFloodFillRequest)
       window.removeEventListener("colorPicked", handleColorPicked as EventListener)
       window.removeEventListener("importImage", handleImportImage as EventListener)
