@@ -273,13 +273,18 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
   }
 
   const triggerDrawStart = (x: number, y: number) => {
-    window.dispatchEvent(new CustomEvent("canvasDrawStart", { detail: { x, y, tool: "brush" } }))
+    const detail = { x, y, tool: "brush" }
+    window.dispatchEvent(new CustomEvent("canvasDrawStart", { detail }))
+    window.dispatchEvent(new CustomEvent("gestureDrawStart", { detail }))
   }
   const triggerDrawMove = (x: number, y: number) => {
-    window.dispatchEvent(new CustomEvent("canvasDrawMove", { detail: { x, y } }))
+    const detail = { x, y }
+    window.dispatchEvent(new CustomEvent("canvasDrawMove", { detail }))
+    window.dispatchEvent(new CustomEvent("gestureDrawMove", { detail }))
   }
   const triggerDrawEnd = () => {
     window.dispatchEvent(new CustomEvent("canvasDrawEnd"))
+    window.dispatchEvent(new CustomEvent("gestureDrawEnd"))
   }
 
   if (error) {
