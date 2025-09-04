@@ -27,6 +27,7 @@ interface HandLandmark {
 export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [currentGesture, setCurrentGesture] = useState<GestureData | null>(null)
@@ -36,6 +37,7 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
   const [isPinching, setIsPinching] = useState(false)
   const [palmPosition, setPalmPosition] = useState<{ x: number; y: number } | null>(null)
   const lastPalmPositionRef = useRef<{ x: number; y: number } | null>(null)
+  const [fingerTips, setFingerTips] = useState<{ x: number; y: number }[]>([])
 
   useEffect(() => {
     let stream: MediaStream | null = null
@@ -88,23 +90,23 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
       if (!videoRef.current || !canvasRef.current) return
 
       const video = videoRef.current
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext("2d")
+      const procCanvas = canvasRef.current
+      const procCtx = procCanvas.getContext("2d")
 
-      if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return
+      if (!procCtx || video.videoWidth === 0 || video.videoHeight === 0) return
 
       try {
         processingRef.current = true
         setIsProcessing(true)
         lastProcessTimeRef.current = now
 
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
+        procCanvas.width = video.videoWidth
+        procCanvas.height = video.videoHeight
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        procCtx.drawImage(video, 0, 0, procCanvas.width, procCanvas.height)
+        const imageData = procCtx.getImageData(0, 0, procCanvas.width, procCanvas.height)
 
-        const handData = detectPalmAndPinch(imageData, canvas.width, canvas.height)
+        const handData = detectPalmAndPinch(imageData, procCanvas.width, procCanvas.height)
 
         if (handData) {
           console.log("[v0] Hand detected:", handData.type, "at", handData.position, "pinching:", handData.isPinching)
@@ -120,19 +122,23 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
           setCurrentGesture(gestureData)
           setPalmPosition(handData.position)
           setIsPinching(handData.isPinching)
+          setFingerTips(handData.fingerTips || [])
           onGestureDetected(gestureData)
 
           if (isDrawingMode) {
             handlePalmDrawing(handData)
           }
+
+          drawOverlay(procCanvas.width, procCanvas.height, handData)
         } else {
-          // No hand detected, stop drawing if we were drawing
           if (isPinching && isDrawingMode) {
             console.log("[v0] Hand lost, stopping drawing")
             setIsPinching(false)
             triggerDrawEnd()
           }
           setPalmPosition(null)
+          setFingerTips([])
+          clearOverlay()
         }
       } catch (error) {
         console.error("[v0] Hand detection error:", error)
@@ -142,7 +148,7 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
       }
     }
 
-    intervalId = setInterval(detectHandGestures, 100) // 10 FPS for smooth tracking
+    intervalId = setInterval(detectHandGestures, 100)
 
     return () => {
       if (intervalId) {
@@ -155,7 +161,6 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
     const data = imageData.data
     const skinPixels: { x: number; y: number; intensity: number }[] = []
 
-    // Enhanced skin detection with better color range
     for (let y = 0; y < height; y += 4) {
       for (let x = 0; x < width; x += 4) {
         const i = (y * width + x) * 4
@@ -163,7 +168,6 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
         const g = data[i + 1]
         const b = data[i + 2]
 
-        // Improved skin detection algorithm
         if (r > 95 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 15 && r - g > 15 && r + g + b > 200) {
           const intensity = (r + g + b) / 3
           skinPixels.push({ x, y, intensity })
@@ -171,9 +175,8 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
       }
     }
 
-    if (skinPixels.length < 100) return null // Need minimum skin pixels for hand
+    if (skinPixels.length < 100) return null
 
-    // Find palm center (largest cluster of skin pixels)
     let palmX = 0
     let palmY = 0
     let totalIntensity = 0
@@ -187,12 +190,32 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
     palmX /= totalIntensity
     palmY /= totalIntensity
 
-    // Detect if fingers are extended (open palm) or pinched
     const fingerRegions = detectFingerRegions(skinPixels, palmX, palmY, width, height)
-    const isPinching = fingerRegions.extendedFingers < 3 // Less than 3 extended fingers = pinch
-    const isOpenPalm = fingerRegions.extendedFingers >= 4 // 4+ extended fingers = open palm
 
-    console.log("[v0] Finger analysis:", fingerRegions.extendedFingers, "extended fingers, pinching:", isPinching)
+    // Build fingertip candidates per sector: farthest pixel from palm within ring
+    const fingerTips = fingerRegions.sectorTips
+
+    // Heuristic: choose the two closest fingertip candidates in the upper half as thumb/index approximation
+    const upperTips = fingerTips.filter((t) => t && t.y < palmY)
+    let minDist = Infinity
+    let pair: { a: { x: number; y: number }; b: { x: number; y: number } } | null = null
+    for (let i = 0; i < upperTips.length; i++) {
+      for (let j = i + 1; j < upperTips.length; j++) {
+        const dx = (upperTips[i]!.x - upperTips[j]!.x)
+        const dy = (upperTips[i]!.y - upperTips[j]!.y)
+        const d = Math.sqrt(dx * dx + dy * dy)
+        if (d < minDist) {
+          minDist = d
+          pair = { a: upperTips[i]!, b: upperTips[j]! }
+        }
+      }
+    }
+
+    const pinchThreshold = Math.min(width, height) * 0.07
+    const isPinching = pair ? minDist < pinchThreshold : fingerRegions.extendedFingers < 3
+    const isOpenPalm = fingerRegions.extendedFingers >= 4
+
+    console.log("[v0] Finger analysis:", fingerRegions.extendedFingers, "extended fingers, pinchDist:", minDist)
 
     return {
       type: isPinching ? "pinch" : isOpenPalm ? "open_palm" : "partial_hand",
@@ -203,6 +226,9 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
       },
       isPinching,
       fingerCount: fingerRegions.extendedFingers,
+      fingerTips: fingerTips.filter(Boolean) as { x: number; y: number }[],
+      palm: { x: palmX, y: palmY },
+      pinchPair: pair,
     }
   }
 
@@ -213,29 +239,83 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
     width: number,
     height: number,
   ) => {
-    // Divide hand region into sectors to detect extended fingers
     const sectors = 8
     const sectorCounts = new Array(sectors).fill(0)
-    const radius = Math.min(width, height) * 0.15 // Hand radius
+    const sectorTips: Array<{ x: number; y: number } | null> = new Array(sectors).fill(null)
+    const radius = Math.min(width, height) * 0.15
 
     skinPixels.forEach((pixel) => {
       const dx = pixel.x - palmX
       const dy = pixel.y - palmY
       const distance = Math.sqrt(dx * dx + dy * dy)
 
-      if (distance > radius * 0.5 && distance < radius * 1.5) {
-        // This pixel is in the finger region
+      if (distance > radius * 0.5 && distance < radius * 1.8) {
         const angle = Math.atan2(dy, dx)
         const sectorIndex = Math.floor(((angle + Math.PI) / (2 * Math.PI)) * sectors) % sectors
         sectorCounts[sectorIndex]++
+        const tip = sectorTips[sectorIndex]
+        if (!tip || distance > Math.sqrt((tip.x - palmX) * (tip.x - palmX) + (tip.y - palmY) * (tip.y - palmY))) {
+          sectorTips[sectorIndex] = { x: pixel.x, y: pixel.y }
+        }
       }
     })
 
-    // Count sectors with significant pixel density (extended fingers)
     const threshold = Math.max(10, skinPixels.length * 0.02)
     const extendedFingers = sectorCounts.filter((count) => count > threshold).length
 
-    return { extendedFingers, sectorCounts }
+    return { extendedFingers, sectorCounts, sectorTips }
+  }
+
+  const drawOverlay = (width: number, height: number, handData: any) => {
+    const overlay = overlayCanvasRef.current
+    if (!overlay) return
+    overlay.width = width
+    overlay.height = height
+    const ctx = overlay.getContext("2d")
+    if (!ctx) return
+
+    ctx.clearRect(0, 0, width, height)
+
+    // Draw palm
+    if (handData.palm) {
+      ctx.fillStyle = "rgba(0, 122, 255, 0.8)"
+      ctx.beginPath()
+      ctx.arc(handData.palm.x, handData.palm.y, 6, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    // Draw finger rays
+    ctx.strokeStyle = handData.isPinching ? "rgba(16, 185, 129, 0.9)" : "rgba(255, 255, 255, 0.6)"
+    ctx.lineWidth = 2
+    ;(handData.fingerTips as { x: number; y: number }[]).forEach((tip: any) => {
+      ctx.beginPath()
+      ctx.moveTo(handData.palm.x, handData.palm.y)
+      ctx.lineTo(tip.x, tip.y)
+      ctx.stroke()
+
+      ctx.fillStyle = "rgba(255,255,255,0.9)"
+      ctx.beginPath()
+      ctx.arc(tip.x, tip.y, 4, 0, Math.PI * 2)
+      ctx.fill()
+    })
+
+    // Draw pinch link if available
+    if (handData.pinchPair) {
+      ctx.strokeStyle = "rgba(16, 185, 129, 0.9)"
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(handData.pinchPair.a.x, handData.pinchPair.a.y)
+      ctx.lineTo(handData.pinchPair.b.x, handData.pinchPair.b.y)
+      ctx.stroke()
+    }
+  }
+
+  const clearOverlay = () => {
+    const overlay = overlayCanvasRef.current
+    if (!overlay) return
+    const ctx = overlay.getContext("2d")
+    if (!ctx) return
+    ctx.clearRect(0, 0, overlay.width, overlay.height)
   }
 
   const handlePalmDrawing = (handData: any) => {
@@ -249,20 +329,16 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
     console.log("[v0] Palm at:", x, y, "pinching:", handData.isPinching, "was pinching:", isPinching)
 
     if (handData.isPinching && !isPinching) {
-      // Start drawing - pinch detected
       console.log("[v0] Pinch detected, starting to draw")
       triggerDrawStart(x, y)
     } else if (handData.isPinching && isPinching) {
-      // Continue drawing - still pinching
       console.log("[v0] Continuing to draw while pinching")
       triggerDrawMove(x, y)
     } else if (!handData.isPinching && isPinching) {
-      // Stop drawing - pinch released
       console.log("[v0] Pinch released, stopping drawing")
       triggerDrawEnd()
     }
 
-    // Update cursor position regardless of drawing state
     triggerCursorMove(x, y)
   }
 
@@ -287,7 +363,6 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
   }
 
   const triggerCursorMove = (x: number, y: number) => {
-    // Show cursor position for visual feedback
     window.dispatchEvent(
       new CustomEvent("gestureCursorMove", {
         detail: { x, y },
@@ -319,6 +394,7 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
 
       <video ref={videoRef} className="w-full h-full object-cover opacity-20" autoPlay muted playsInline />
       <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={overlayCanvasRef} className="absolute inset-0 pointer-events-none" />
 
       <div className="absolute top-4 left-4 z-20 space-y-2">
         {currentGesture && (
