@@ -266,6 +266,8 @@ export function CameraView({
   }
 
   const getDrawingCanvasRect = () => {
+    const byId = document.getElementById("main-drawing-canvas") as HTMLCanvasElement | null
+    if (byId) return byId.getBoundingClientRect()
     const drawingCanvas = document.querySelector("canvas.touch-none") as HTMLCanvasElement | null
     if (drawingCanvas) return drawingCanvas.getBoundingClientRect()
     // Fallback to viewport size

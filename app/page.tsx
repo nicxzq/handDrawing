@@ -89,6 +89,10 @@ export default function DrawingApp() {
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(true) // Added shortcuts visibility
   const [shortcutsPosition, setShortcutsPosition] = useState({ x: 16, y: 16 }) // Added position state
   const [isDrawingMode, setIsDrawingMode] = useState(true) // Default to drawing mode when camera is enabled for better UX
+  // 手势绘制会话管理
+  const [isGestureSessionActive, setIsGestureSessionActive] = useState(false)
+  const [prevToolBeforeGesture, setPrevToolBeforeGesture] = useState<string | null>(null)
+  const lastDrawingToolRef = useRef<string>("brush")
 
   // 添加DrawingCanvas的ref
   const drawingCanvasRef = useRef<DrawingCanvasRef>(null)
@@ -102,8 +106,20 @@ export default function DrawingApp() {
       return
     }
 
+    // Draw Mode 下强制使用可绘制工具
+    const drawableTools = new Set(["brush", "pen", "marker", "highlighter", "eraser"]) 
+    if (isDrawingMode && !drawableTools.has(currentTool)) {
+      setPrevToolBeforeGesture(currentTool)
+      const nextTool = lastDrawingToolRef.current || "brush"
+      if (nextTool !== currentTool) {
+        console.log("[MainApp] Forcing drawable tool for gesture:", nextTool, "(prev:", currentTool, ")")
+        setCurrentTool(nextTool)
+      }
+    }
+
     try {
       drawingCanvasRef.current.startDrawing(x, y, 1)
+      setIsGestureSessionActive(true)
     } catch (error) {
       console.error("[MainApp] Error in startDrawing:", error)
     }
@@ -131,6 +147,15 @@ export default function DrawingApp() {
 
     try {
       drawingCanvasRef.current.stopDrawing()
+      // 恢复工具（仅当是手势会话且处于 Draw Mode）
+      if (isGestureSessionActive) {
+        setIsGestureSessionActive(false)
+        if (prevToolBeforeGesture && isDrawingMode) {
+          console.log("[MainApp] Restoring tool after gesture:", prevToolBeforeGesture)
+          setCurrentTool(prevToolBeforeGesture)
+        }
+        setPrevToolBeforeGesture(null)
+      }
     } catch (error) {
       console.error("[MainApp] Error in stopDrawing:", error)
     }
@@ -227,6 +252,14 @@ export default function DrawingApp() {
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [isDrawingMode])
+
+  // 记录最近一次使用的绘制类工具
+  useEffect(() => {
+    const drawableTools = new Set(["brush", "pen", "marker", "highlighter", "eraser"]) 
+    if (drawableTools.has(currentTool)) {
+      lastDrawingToolRef.current = currentTool
+    }
+  }, [currentTool])
 
   const handleShapeSelect = (shape: any) => {
     setCurrentTool("shape")

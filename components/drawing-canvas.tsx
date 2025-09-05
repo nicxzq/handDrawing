@@ -911,6 +911,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
 
   return (
     <canvas
+      id="main-drawing-canvas"
       ref={canvasRef}
       className={`absolute inset-0 touch-none ${
         tool === "pan"
