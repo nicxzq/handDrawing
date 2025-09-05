@@ -531,12 +531,14 @@ export function DrawingCanvas({
         return
       }
 
-      if (!isDrawing) return
+      // 修复：不仅检查isDrawing状态，还要检查currentPath是否正在绘制
+      // 这样可以确保即使状态更新有延迟，绘制逻辑也能正常工作
+      if (!isDrawing && currentPath.length === 0) return
 
       const point = { x, y, pressure }
       setCurrentPath((prev) => [...prev, point])
     },
-    [isDrawing, tool, isPanning, lastPanPoint],
+    [isDrawing, currentPath, tool, isPanning, lastPanPoint],
   )
 
   const stopDrawing = useCallback(() => {

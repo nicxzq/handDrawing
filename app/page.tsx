@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { CameraView } from "@/components/camera-view"
-import { DrawingCanvas } from "@/components/drawing-canvas"
+import { DrawingCanvas, DrawingCanvasRef } from "@/components/drawing-canvas"
 import { ToolPanel } from "@/components/tool-panel"
 import { ShapeLibrary } from "@/components/shape-library"
 import { AdvancedTools } from "@/components/advanced-tools"
@@ -89,6 +89,24 @@ export default function DrawingApp() {
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(true) // Added shortcuts visibility
   const [shortcutsPosition, setShortcutsPosition] = useState({ x: 16, y: 16 }) // Added position state
   const [isDrawingMode, setIsDrawingMode] = useState(true) // Default to drawing mode when camera is enabled for better UX
+
+  // 添加DrawingCanvas的ref
+  const drawingCanvasRef = useRef<DrawingCanvasRef>(null)
+
+  // 添加直接通信方法
+  const handleDrawStart = (x: number, y: number) => {
+    console.log("[MainApp] Draw start at:", x, y)
+    drawingCanvasRef.current?.startDrawing(x, y)
+  }
+
+  const handleDrawMove = (x: number, y: number) => {
+    drawingCanvasRef.current?.draw(x, y)
+  }
+
+  const handleDrawEnd = () => {
+    console.log("[MainApp] Draw end")
+    drawingCanvasRef.current?.stopDrawing()
+  }
 
   const t = LANGUAGES[language] // Translation helper
 
@@ -196,18 +214,25 @@ export default function DrawingApp() {
       {/* Camera View - positioned behind canvas for gesture recognition */}
       {isCameraEnabled && (
         <div className="absolute inset-0 z-0">
-          <CameraView onGestureDetected={handleGestureDetected} isDrawingMode={isDrawingMode} />
+          <CameraView 
+            onGestureDetected={handleGestureDetected} 
+            isDrawingMode={isDrawingMode}
+            onDrawStart={handleDrawStart}
+            onDrawMove={handleDrawMove}
+            onDrawEnd={handleDrawEnd}
+          />
         </div>
       )}
 
       {/* Main Drawing Canvas - full screen */}
       <div className="absolute inset-0 z-10">
         <DrawingCanvas
+          ref={drawingCanvasRef}
           tool={currentTool}
           brushColor={brushColor}
           brushSize={brushSize}
           brushStyle={brushStyle}
-          isGestureDrawing={isDrawingMode && isCameraEnabled} // Pass gesture drawing state
+          isGestureDrawing={isDrawingMode && isCameraEnabled}
         />
       </div>
 

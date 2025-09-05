@@ -8,6 +8,9 @@ import { AlertCircle, Hand, Eye } from "lucide-react"
 interface CameraViewProps {
   onGestureDetected: (gesture: GestureData) => void
   isDrawingMode?: boolean
+  onDrawStart?: (x: number, y: number) => void
+  onDrawMove?: (x: number, y: number) => void
+  onDrawEnd?: () => void
 }
 
 interface GestureData {
@@ -18,7 +21,13 @@ interface GestureData {
   isDrawing?: boolean
 }
 
-export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraViewProps) {
+export function CameraView({ 
+  onGestureDetected, 
+  isDrawingMode = false,
+  onDrawStart,
+  onDrawMove,
+  onDrawEnd
+}: CameraViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -271,23 +280,37 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
   }
 
   const triggerDrawStart = (x: number, y: number) => {
-    const detail = { x, y, tool: "brush" }
-    window.dispatchEvent(new CustomEvent("canvasDrawStart", { detail }))
-    if (isDrawingMode) {
-      window.dispatchEvent(new CustomEvent("gestureDrawStart", { detail }))
+    // 修复：使用直接方法调用替代CustomEvent，避免状态竞争
+    if (onDrawStart) {
+      try {
+        onDrawStart(x, y)
+        console.log("[CameraView] Draw start triggered at:", x, y)
+      } catch (error) {
+        console.error("[CameraView] Error in draw start:", error)
+      }
     }
   }
+  
   const triggerDrawMove = (x: number, y: number) => {
-    const detail = { x, y }
-    window.dispatchEvent(new CustomEvent("canvasDrawMove", { detail }))
-    if (isDrawingMode) {
-      window.dispatchEvent(new CustomEvent("gestureDrawMove", { detail }))
+    // 修复：使用直接方法调用替代CustomEvent，避免状态竞争
+    if (onDrawMove) {
+      try {
+        onDrawMove(x, y)
+      } catch (error) {
+        console.error("[CameraView] Error in draw move:", error)
+      }
     }
   }
+  
   const triggerDrawEnd = () => {
-    window.dispatchEvent(new CustomEvent("canvasDrawEnd"))
-    if (isDrawingMode) {
-      window.dispatchEvent(new CustomEvent("gestureDrawEnd"))
+    // 修复：使用直接方法调用替代CustomEvent，避免状态竞争
+    if (onDrawEnd) {
+      try {
+        onDrawEnd()
+        console.log("[CameraView] Draw end triggered")
+      } catch (error) {
+        console.error("[CameraView] Error in draw end:", error)
+      }
     }
   }
 
