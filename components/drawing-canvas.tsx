@@ -548,7 +548,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     [tool, saveState, pendingShape, handleShapeClick, pickColor, addText, brushColor, currentLayer, floodFill, isDrawing, currentPath, brushSize, brushStyle],
   )
 
-  // 修复：优化draw方法，确保在绘制状态下能正确添加点
+  // 修复：优化draw方法，确保状态同步和实时绘制
   const draw = useCallback(
     (x: number, y: number, pressure = 1) => {
       console.log("[DrawingCanvas] draw called with:", { x, y, pressure, isDrawing, currentPathLength: currentPath.length })
@@ -571,10 +571,45 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
       setCurrentPath((prev) => {
         const newPath = [...prev, point]
         console.log("[DrawingCanvas] Added point to path, total points:", newPath.length)
+        
+        // 修复：立即触发重绘，确保实时显示
+        setTimeout(() => {
+          const canvas = canvasRef.current
+          if (!canvas) return
+
+          const ctx = canvas.getContext("2d")
+          if (!ctx) return
+
+          // 重绘整个画布
+          redrawCanvas()
+
+          // 绘制当前路径
+          ctx.save()
+          ctx.translate(panOffset.x, panOffset.y)
+          ctx.scale(scale, scale)
+          ctx.strokeStyle = brushColor
+          ctx.lineWidth = brushSize
+          ctx.lineCap = brushStyle === "round" ? "round" : "square"
+
+          if (tool === "brush" || tool === "pen" || tool === "marker" || tool === "highlighter") {
+            drawSmoothPath(ctx, newPath, tool)
+          } else if (tool === "eraser") {
+            ctx.globalCompositeOperation = "destination-out"
+            newPath.forEach((point) => {
+              ctx.beginPath()
+              ctx.arc(point.x, point.y, brushSize, 0, 2 * Math.PI)
+              ctx.fill()
+            })
+            ctx.globalCompositeOperation = "source-over"
+          }
+
+          ctx.restore()
+        }, 0)
+        
         return newPath
       })
     },
-    [isDrawing, tool, isPanning, lastPanPoint],
+    [isDrawing, tool, isPanning, lastPanPoint, redrawCanvas, panOffset, scale, brushColor, brushSize, brushStyle],
   )
 
   // 修复：优化stopDrawing方法，确保路径正确完成
@@ -820,8 +855,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
+    // 重绘整个画布
     redrawCanvas()
 
+    // 绘制当前路径
     ctx.save()
     ctx.translate(panOffset.x, panOffset.y)
     ctx.scale(scale, scale)
