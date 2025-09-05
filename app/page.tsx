@@ -93,20 +93,47 @@ export default function DrawingApp() {
   // 添加DrawingCanvas的ref
   const drawingCanvasRef = useRef<DrawingCanvasRef>(null)
 
-  // 添加直接通信方法
+  // 优化直接通信方法，添加错误处理和状态检查
   const handleDrawStart = (x: number, y: number) => {
     console.log("[MainApp] Draw start at:", x, y, "with tool:", currentTool)
-    // 修复：传递当前工具状态给DrawingCanvas
-    drawingCanvasRef.current?.startDrawing(x, y, 1)
+    
+    if (!drawingCanvasRef.current) {
+      console.error("[MainApp] DrawingCanvas ref not available")
+      return
+    }
+
+    try {
+      drawingCanvasRef.current.startDrawing(x, y, 1)
+    } catch (error) {
+      console.error("[MainApp] Error in startDrawing:", error)
+    }
   }
 
   const handleDrawMove = (x: number, y: number) => {
-    drawingCanvasRef.current?.draw(x, y, 1)
+    if (!drawingCanvasRef.current) {
+      return
+    }
+
+    try {
+      drawingCanvasRef.current.draw(x, y, 1)
+    } catch (error) {
+      console.error("[MainApp] Error in draw:", error)
+    }
   }
 
   const handleDrawEnd = () => {
     console.log("[MainApp] Draw end")
-    drawingCanvasRef.current?.stopDrawing()
+    
+    if (!drawingCanvasRef.current) {
+      console.error("[MainApp] DrawingCanvas ref not available")
+      return
+    }
+
+    try {
+      drawingCanvasRef.current.stopDrawing()
+    } catch (error) {
+      console.error("[MainApp] Error in stopDrawing:", error)
+    }
   }
 
   const t = LANGUAGES[language] // Translation helper

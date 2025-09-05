@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useRef, useEffect, useState, useCallback } from "react"
+import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from "react"
 
 interface DrawingCanvasProps {
   tool: string
@@ -9,6 +9,16 @@ interface DrawingCanvasProps {
   brushSize: number
   brushStyle: string
   isGestureDrawing?: boolean // Added gesture drawing prop
+}
+
+// 添加DrawingCanvasRef接口定义
+export interface DrawingCanvasRef {
+  startDrawing: (x: number, y: number, pressure?: number) => void
+  draw: (x: number, y: number, pressure?: number) => void
+  stopDrawing: () => void
+  undo: () => void
+  redo: () => void
+  clearCanvas: () => void
 }
 
 // ... existing interfaces ...
@@ -52,13 +62,14 @@ interface TextElement {
   layer: number
 }
 
-export function DrawingCanvas({
+// 使用forwardRef包装组件
+export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
   tool,
   brushColor,
   brushSize,
   brushStyle,
   isGestureDrawing = false,
-}: DrawingCanvasProps) {
+}, ref) => {
   // ... existing state ...
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -624,6 +635,34 @@ export function DrawingCanvas({
     [scale],
   )
 
+  // 添加useImperativeHandle暴露方法
+  useImperativeHandle(ref, () => ({
+    startDrawing: (x: number, y: number, pressure = 1) => {
+      console.log("[DrawingCanvas] Ref startDrawing called with:", { x, y, pressure, tool })
+      startDrawing(x, y, pressure)
+    },
+    draw: (x: number, y: number, pressure = 1) => {
+      console.log("[DrawingCanvas] Ref draw called with:", { x, y, pressure, isDrawing, currentPathLength: currentPath.length })
+      draw(x, y, pressure)
+    },
+    stopDrawing: () => {
+      console.log("[DrawingCanvas] Ref stopDrawing called")
+      stopDrawing()
+    },
+    undo: () => {
+      console.log("[DrawingCanvas] Ref undo called")
+      undo()
+    },
+    redo: () => {
+      console.log("[DrawingCanvas] Ref redo called")
+      redo()
+    },
+    clearCanvas: () => {
+      console.log("[DrawingCanvas] Ref clearCanvas called")
+      clearCanvas()
+    }
+  }), [startDrawing, draw, stopDrawing, undo, redo, clearCanvas, tool, isDrawing, currentPath.length])
+
   useEffect(() => {
     // Handlers for gesture-based events (gated by isGestureDrawing)
     const handleGestureDrawStart = (event: CustomEvent) => {
@@ -843,4 +882,7 @@ export function DrawingCanvas({
       onWheel={handleWheel}
     />
   )
-}
+})
+
+// 添加displayName用于调试
+DrawingCanvas.displayName = 'DrawingCanvas'

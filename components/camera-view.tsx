@@ -279,8 +279,20 @@ export function CameraView({
     return { canvasX: canvasX - canvasRect.left, canvasY: canvasY - canvasRect.top }
   }
 
+  // 优化直接方法调用，添加错误处理和边界检查
   const triggerDrawStart = (x: number, y: number) => {
-    // 修复：使用直接方法调用替代CustomEvent，避免状态竞争
+    if (!isDrawingMode) {
+      console.log("[CameraView] Drawing mode disabled, ignoring draw start")
+      return
+    }
+    
+    // 添加边界检查
+    const canvasRect = getDrawingCanvasRect()
+    if (x < 0 || x > canvasRect.width || y < 0 || y > canvasRect.height) {
+      console.log("[CameraView] Coordinates out of bounds:", { x, y, canvasWidth: canvasRect.width, canvasHeight: canvasRect.height })
+      return
+    }
+
     if (onDrawStart) {
       try {
         onDrawStart(x, y)
@@ -292,7 +304,16 @@ export function CameraView({
   }
   
   const triggerDrawMove = (x: number, y: number) => {
-    // 修复：使用直接方法调用替代CustomEvent，避免状态竞争
+    if (!isDrawingMode) {
+      return
+    }
+
+    // 添加边界检查
+    const canvasRect = getDrawingCanvasRect()
+    if (x < 0 || x > canvasRect.width || y < 0 || y > canvasRect.height) {
+      return
+    }
+
     if (onDrawMove) {
       try {
         onDrawMove(x, y)
@@ -303,7 +324,10 @@ export function CameraView({
   }
   
   const triggerDrawEnd = () => {
-    // 修复：使用直接方法调用替代CustomEvent，避免状态竞争
+    if (!isDrawingMode) {
+      return
+    }
+
     if (onDrawEnd) {
       try {
         onDrawEnd()
