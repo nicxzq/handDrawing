@@ -225,15 +225,13 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
     setCurrentGesture(gestureData)
     setPalmPosition({ x: cursor.x / overlay.width, y: cursor.y / overlay.height })
 
-    // Drive drawing
-    if (isDrawingMode) {
-      if (nextPinching && !isPinching) {
-        triggerDrawStart(canvasX, canvasY)
-      } else if (nextPinching && isPinching) {
-        triggerDrawMove(canvasX, canvasY)
-      } else if (!nextPinching && isPinching) {
-        triggerDrawEnd()
-      }
+    // Drive drawing - always send canvas events, conditionally send gesture events  
+    if (nextPinching && !isPinching) {
+      triggerDrawStart(canvasX, canvasY)
+    } else if (nextPinching && isPinching) {
+      triggerDrawMove(canvasX, canvasY)
+    } else if (!nextPinching && isPinching) {
+      triggerDrawEnd()
     }
 
     setIsPinching(nextPinching)
@@ -275,16 +273,22 @@ export function CameraView({ onGestureDetected, isDrawingMode = false }: CameraV
   const triggerDrawStart = (x: number, y: number) => {
     const detail = { x, y, tool: "brush" }
     window.dispatchEvent(new CustomEvent("canvasDrawStart", { detail }))
-    window.dispatchEvent(new CustomEvent("gestureDrawStart", { detail }))
+    if (isDrawingMode) {
+      window.dispatchEvent(new CustomEvent("gestureDrawStart", { detail }))
+    }
   }
   const triggerDrawMove = (x: number, y: number) => {
     const detail = { x, y }
     window.dispatchEvent(new CustomEvent("canvasDrawMove", { detail }))
-    window.dispatchEvent(new CustomEvent("gestureDrawMove", { detail }))
+    if (isDrawingMode) {
+      window.dispatchEvent(new CustomEvent("gestureDrawMove", { detail }))
+    }
   }
   const triggerDrawEnd = () => {
     window.dispatchEvent(new CustomEvent("canvasDrawEnd"))
-    window.dispatchEvent(new CustomEvent("gestureDrawEnd"))
+    if (isDrawingMode) {
+      window.dispatchEvent(new CustomEvent("gestureDrawEnd"))
+    }
   }
 
   if (error) {
