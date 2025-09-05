@@ -241,12 +241,13 @@ export function CameraView({
     setPalmPosition({ x: cursor.x / overlay.width, y: cursor.y / overlay.height })
 
     // 修复：确保绘制流程完整执行，每次绘制都是独立的
-    if (nextPinching && !isPinching) {
-      // 开始新的绘制会话
-      console.log("[CameraView] Starting new drawing session at:", canvasX, canvasY)
-      triggerDrawStart(canvasX, canvasY)
-    } else if (nextPinching && isPinching) {
-      // 继续当前绘制会话
+    if (nextPinching) {
+      if (!isPinching) {
+        // 开始新的绘制会话
+        console.log("[CameraView] Starting new drawing session at:", canvasX, canvasY)
+        triggerDrawStart(canvasX, canvasY)
+      }
+      // 捏合期间每帧都推送移动，确保实时绘制
       triggerDrawMove(canvasX, canvasY)
     } else if (!nextPinching && isPinching) {
       // 结束当前绘制会话

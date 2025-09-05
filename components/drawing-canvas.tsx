@@ -418,6 +418,40 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     ctx.stroke()
   }
 
+  // 即时渲染当前路径（不提交到 paths），用于手势/鼠标移动的实时预览
+  const renderLivePath = useCallback((points: Point[], pathTool: string, size: number, color: string, style: string) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // 重绘底层
+    redrawCanvas()
+
+    // 绘制当前动态路径
+    ctx.save()
+    ctx.translate(panOffset.x, panOffset.y)
+    ctx.scale(scale, scale)
+    ctx.strokeStyle = color
+    ctx.lineWidth = size
+    ctx.lineCap = style === "round" ? "round" : "square"
+
+    if (pathTool === "brush" || pathTool === "pen" || pathTool === "marker" || pathTool === "highlighter") {
+      drawSmoothPath(ctx, points, pathTool)
+    } else if (pathTool === "eraser") {
+      ctx.globalCompositeOperation = "destination-out"
+      points.forEach((point) => {
+        ctx.beginPath()
+        ctx.arc(point.x, point.y, size, 0, 2 * Math.PI)
+        ctx.fill()
+      })
+      ctx.globalCompositeOperation = "source-over"
+    }
+
+    ctx.restore()
+  }, [redrawCanvas, panOffset, scale])
+
   const drawShape = (ctx: CanvasRenderingContext2D, shape: Shape) => {
     ctx.save()
     ctx.translate(shape.x, shape.y)
@@ -492,33 +526,37 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     (x: number, y: number, pressure = 1) => {
       console.log("[DrawingCanvas] startDrawing called with:", { x, y, pressure, tool, isDrawing })
       
-      if (tool === "pan") {
+      const drawableTools = new Set(["brush", "pen", "marker", "highlighter", "eraser"]) 
+      const gestureForcesDraw = isGestureDrawing && !drawableTools.has(tool)
+      const effectiveTool = gestureForcesDraw ? "brush" : tool
+
+      if (effectiveTool === "pan") {
         setIsPanning(true)
         setLastPanPoint({ x, y })
         return
       }
 
-      if (tool === "bucket") {
+      if (effectiveTool === "bucket" && !gestureForcesDraw) {
         floodFill(Math.floor(x), Math.floor(y), brushColor)
         return
       }
 
-      if (tool === "eyedropper") {
+      if (effectiveTool === "eyedropper" && !gestureForcesDraw) {
         pickColor(Math.floor(x), Math.floor(y))
         return
       }
 
-      if (tool === "text") {
+      if (effectiveTool === "text" && !gestureForcesDraw) {
         addText(x, y)
         return
       }
 
-      if (tool === "shape" && pendingShape) {
+      if (effectiveTool === "shape" && pendingShape && !gestureForcesDraw) {
         handleShapeClick(x, y)
         return
       }
 
-      if (tool === "select") {
+      if (effectiveTool === "select" && !gestureForcesDraw) {
         handleShapeClick(x, y)
         return
       }
@@ -531,7 +569,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
           color: brushColor,
           size: brushSize,
           style: brushStyle,
-          tool: tool,
+          tool: effectiveTool,
           layer: currentLayer,
         }
         setPaths((prev) => [...prev, newPath])
@@ -543,9 +581,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
       const point = { x, y, pressure }
       setCurrentPath([point])
 
-      console.log("[v0] Started drawing at:", x, y, "with tool:", tool)
+      console.log("[v0] Started drawing at:", x, y, "with tool:", effectiveTool, "(raw:", tool, ", gesture:", isGestureDrawing, ")")
+
+      // 立即显示起笔点（实时预览）
+      requestAnimationFrame(() => {
+        renderLivePath([point], effectiveTool, brushSize, brushColor, brushStyle)
+      })
     },
-    [tool, saveState, pendingShape, handleShapeClick, pickColor, addText, brushColor, currentLayer, floodFill, isDrawing, currentPath, brushSize, brushStyle],
+    [tool, saveState, pendingShape, handleShapeClick, pickColor, addText, brushColor, currentLayer, floodFill, isDrawing, currentPath, brushSize, brushStyle, renderLivePath, isGestureDrawing],
   )
 
   // 修复：优化draw方法，确保状态同步和实时绘制
@@ -553,7 +596,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     (x: number, y: number, pressure = 1) => {
       console.log("[DrawingCanvas] draw called with:", { x, y, pressure, isDrawing, currentPathLength: currentPath.length })
       
-      if (tool === "pan" && isPanning && lastPanPoint) {
+      const drawableTools = new Set(["brush", "pen", "marker", "highlighter", "eraser"]) 
+      const gestureForcesDraw = isGestureDrawing && !drawableTools.has(tool)
+      const effectiveTool = gestureForcesDraw ? "brush" : tool
+
+      if (effectiveTool === "pan" && isPanning && lastPanPoint) {
         const deltaX = x - lastPanPoint.x
         const deltaY = y - lastPanPoint.y
         setPanOffset((prev) => ({ x: prev.x + deltaX, y: prev.y + deltaY }))
@@ -572,51 +619,26 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
         const newPath = [...prev, point]
         console.log("[DrawingCanvas] Added point to path, total points:", newPath.length)
         
-        // 修复：立即触发重绘，确保实时显示
-        setTimeout(() => {
-          const canvas = canvasRef.current
-          if (!canvas) return
-
-          const ctx = canvas.getContext("2d")
-          if (!ctx) return
-
-          // 重绘整个画布
-          redrawCanvas()
-
-          // 绘制当前路径
-          ctx.save()
-          ctx.translate(panOffset.x, panOffset.y)
-          ctx.scale(scale, scale)
-          ctx.strokeStyle = brushColor
-          ctx.lineWidth = brushSize
-          ctx.lineCap = brushStyle === "round" ? "round" : "square"
-
-          if (tool === "brush" || tool === "pen" || tool === "marker" || tool === "highlighter") {
-            drawSmoothPath(ctx, newPath, tool)
-          } else if (tool === "eraser") {
-            ctx.globalCompositeOperation = "destination-out"
-            newPath.forEach((point) => {
-              ctx.beginPath()
-              ctx.arc(point.x, point.y, brushSize, 0, 2 * Math.PI)
-              ctx.fill()
-            })
-            ctx.globalCompositeOperation = "source-over"
-          }
-
-          ctx.restore()
-        }, 0)
-        
+        // 修复：使用 requestAnimationFrame 进行实时预览渲染
+        requestAnimationFrame(() => {
+          renderLivePath(newPath, effectiveTool, brushSize, brushColor, brushStyle)
+        })
+         
         return newPath
       })
     },
-    [isDrawing, tool, isPanning, lastPanPoint, redrawCanvas, panOffset, scale, brushColor, brushSize, brushStyle],
+    [isDrawing, tool, isPanning, lastPanPoint, renderLivePath, brushSize, brushColor, brushStyle, isGestureDrawing],
   )
 
   // 修复：优化stopDrawing方法，确保路径正确完成
   const stopDrawing = useCallback(() => {
     console.log("[DrawingCanvas] stopDrawing called with:", { isDrawing, currentPathLength: currentPath.length, tool })
     
-    if (tool === "pan") {
+    const drawableTools = new Set(["brush", "pen", "marker", "highlighter", "eraser"]) 
+    const gestureForcesDraw = isGestureDrawing && !drawableTools.has(tool)
+    const effectiveTool = gestureForcesDraw ? "brush" : tool
+
+    if (effectiveTool === "pan") {
       setIsPanning(false)
       setLastPanPoint(null)
       return
@@ -633,7 +655,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
       color: brushColor,
       size: brushSize,
       style: brushStyle,
-      tool: tool,
+      tool: effectiveTool,
       layer: currentLayer,
     }
 
@@ -641,7 +663,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     setCurrentPath([])
     setIsDrawing(false)
     console.log("[v0] Completed path with", currentPath.length, "points on layer", currentLayer)
-  }, [isDrawing, currentPath, brushColor, brushSize, brushStyle, tool, currentLayer])
+  }, [isDrawing, currentPath, brushColor, brushSize, brushStyle, tool, currentLayer, isGestureDrawing])
 
   // ... existing undo, redo, clear functions ...
 
@@ -714,7 +736,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
       console.log("[DrawingCanvas] Ref clearCanvas called")
       clearCanvas()
     }
-  }), [startDrawing, draw, stopDrawing, undo, redo, clearCanvas, tool, isDrawing, currentPath.length])
+  }), [startDrawing, draw, stopDrawing, undo, redo, clearCanvas, tool, isDrawing, currentPath.length, isGestureDrawing])
 
   useEffect(() => {
     // Handlers for gesture-based events (gated by isGestureDrawing)
