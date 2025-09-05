@@ -161,7 +161,7 @@ export function CameraView({
     if (!landmarks || landmarks.length === 0) {
       // No hand: ensure end drawing if currently pinching
       if (isPinching) {
-        const { x, y } = getCanvasCenterCoords()
+        console.log("[CameraView] Hand lost, ending drawing")
         triggerDrawEnd()
         setIsPinching(false)
         setCurrentGesture(null)
@@ -234,12 +234,18 @@ export function CameraView({
     setCurrentGesture(gestureData)
     setPalmPosition({ x: cursor.x / overlay.width, y: cursor.y / overlay.height })
 
-    // Drive drawing - always send canvas events, conditionally send gesture events  
+    // 修复：确保绘制流程完整执行
     if (nextPinching && !isPinching) {
+      // 开始绘制
+      console.log("[CameraView] Starting drawing at:", canvasX, canvasY)
       triggerDrawStart(canvasX, canvasY)
     } else if (nextPinching && isPinching) {
+      // 继续绘制
+      console.log("[CameraView] Continuing drawing at:", canvasX, canvasY)
       triggerDrawMove(canvasX, canvasY)
     } else if (!nextPinching && isPinching) {
+      // 结束绘制
+      console.log("[CameraView] Ending drawing")
       triggerDrawEnd()
     }
 
