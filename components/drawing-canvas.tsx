@@ -523,6 +523,8 @@ export function DrawingCanvas({
 
   const draw = useCallback(
     (x: number, y: number, pressure = 1) => {
+      console.log("[DrawingCanvas] draw called with:", { x, y, pressure, isDrawing, currentPathLength: currentPath.length })
+      
       if (tool === "pan" && isPanning && lastPanPoint) {
         const deltaX = x - lastPanPoint.x
         const deltaY = y - lastPanPoint.y
@@ -531,24 +533,36 @@ export function DrawingCanvas({
         return
       }
 
-      // 修复：不仅检查isDrawing状态，还要检查currentPath是否正在绘制
-      // 这样可以确保即使状态更新有延迟，绘制逻辑也能正常工作
-      if (!isDrawing && currentPath.length === 0) return
+      // 修复：放宽绘制条件检查，允许在currentPath有内容时继续绘制
+      // 即使isDrawing状态更新有延迟，也能正常绘制
+      if (!isDrawing && currentPath.length === 0) {
+        console.log("[DrawingCanvas] Draw skipped - not drawing and no current path")
+        return
+      }
 
       const point = { x, y, pressure }
-      setCurrentPath((prev) => [...prev, point])
+      setCurrentPath((prev) => {
+        const newPath = [...prev, point]
+        console.log("[DrawingCanvas] Added point to path, total points:", newPath.length)
+        return newPath
+      })
     },
     [isDrawing, currentPath, tool, isPanning, lastPanPoint],
   )
 
   const stopDrawing = useCallback(() => {
+    console.log("[DrawingCanvas] stopDrawing called with:", { isDrawing, currentPathLength: currentPath.length, tool })
+    
     if (tool === "pan") {
       setIsPanning(false)
       setLastPanPoint(null)
       return
     }
 
-    if (!isDrawing || currentPath.length === 0) return
+    if (!isDrawing || currentPath.length === 0) {
+      console.log("[DrawingCanvas] Stop drawing skipped - not drawing or no current path")
+      return
+    }
 
     const newPath: DrawingPath = {
       points: currentPath,

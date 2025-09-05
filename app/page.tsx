@@ -95,12 +95,13 @@ export default function DrawingApp() {
 
   // 添加直接通信方法
   const handleDrawStart = (x: number, y: number) => {
-    console.log("[MainApp] Draw start at:", x, y)
-    drawingCanvasRef.current?.startDrawing(x, y)
+    console.log("[MainApp] Draw start at:", x, y, "with tool:", currentTool)
+    // 修复：传递当前工具状态给DrawingCanvas
+    drawingCanvasRef.current?.startDrawing(x, y, 1)
   }
 
   const handleDrawMove = (x: number, y: number) => {
-    drawingCanvasRef.current?.draw(x, y)
+    drawingCanvasRef.current?.draw(x, y, 1)
   }
 
   const handleDrawEnd = () => {
