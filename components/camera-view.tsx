@@ -207,11 +207,17 @@ export function CameraView({
     if (pinchDist < startThreshold) {
       pinchFramesRef.current += 1
       releaseFramesRef.current = 0
-      if (!isPinching && pinchFramesRef.current >= 2) nextPinching = true
+      if (!isPinching && pinchFramesRef.current >= 2) {
+        nextPinching = true
+        console.log("[CameraView] Pinch detected, starting new drawing session")
+      }
     } else if (pinchDist > endThreshold) {
       releaseFramesRef.current += 1
       pinchFramesRef.current = 0
-      if (isPinching && releaseFramesRef.current >= 2) nextPinching = false
+      if (isPinching && releaseFramesRef.current >= 2) {
+        nextPinching = false
+        console.log("[CameraView] Pinch released, ending drawing session")
+      }
     } else {
       pinchFramesRef.current = 0
       releaseFramesRef.current = 0
@@ -234,18 +240,17 @@ export function CameraView({
     setCurrentGesture(gestureData)
     setPalmPosition({ x: cursor.x / overlay.width, y: cursor.y / overlay.height })
 
-    // 修复：确保绘制流程完整执行
+    // 修复：确保绘制流程完整执行，每次绘制都是独立的
     if (nextPinching && !isPinching) {
-      // 开始绘制
-      console.log("[CameraView] Starting drawing at:", canvasX, canvasY)
+      // 开始新的绘制会话
+      console.log("[CameraView] Starting new drawing session at:", canvasX, canvasY)
       triggerDrawStart(canvasX, canvasY)
     } else if (nextPinching && isPinching) {
-      // 继续绘制
-      console.log("[CameraView] Continuing drawing at:", canvasX, canvasY)
+      // 继续当前绘制会话
       triggerDrawMove(canvasX, canvasY)
     } else if (!nextPinching && isPinching) {
-      // 结束绘制
-      console.log("[CameraView] Ending drawing")
+      // 结束当前绘制会话
+      console.log("[CameraView] Ending current drawing session")
       triggerDrawEnd()
     }
 

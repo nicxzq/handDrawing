@@ -487,8 +487,11 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
     [pendingShape, brushColor, saveState, currentLayer, shapes, selectShape],
   )
 
+  // 修复：优化startDrawing方法，确保状态正确管理
   const startDrawing = useCallback(
     (x: number, y: number, pressure = 1) => {
+      console.log("[DrawingCanvas] startDrawing called with:", { x, y, pressure, tool, isDrawing })
+      
       if (tool === "pan") {
         setIsPanning(true)
         setLastPanPoint({ x, y })
@@ -520,6 +523,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
         return
       }
 
+      // 修复：如果已经在绘制中，先完成当前路径
+      if (isDrawing && currentPath.length > 0) {
+        console.log("[DrawingCanvas] Finishing previous path before starting new one")
+        const newPath: DrawingPath = {
+          points: currentPath,
+          color: brushColor,
+          size: brushSize,
+          style: brushStyle,
+          tool: tool,
+          layer: currentLayer,
+        }
+        setPaths((prev) => [...prev, newPath])
+        console.log("[v0] Completed previous path with", currentPath.length, "points on layer", currentLayer)
+      }
+
       saveState()
       setIsDrawing(true)
       const point = { x, y, pressure }
@@ -527,10 +545,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
 
       console.log("[v0] Started drawing at:", x, y, "with tool:", tool)
     },
-    [tool, saveState, pendingShape, handleShapeClick, pickColor, addText, brushColor, currentLayer, floodFill],
+    [tool, saveState, pendingShape, handleShapeClick, pickColor, addText, brushColor, currentLayer, floodFill, isDrawing, currentPath, brushSize, brushStyle],
   )
 
-  // 修复：优化draw方法，确保ref调用能正确触发绘制
+  // 修复：优化draw方法，确保在绘制状态下能正确添加点
   const draw = useCallback(
     (x: number, y: number, pressure = 1) => {
       console.log("[DrawingCanvas] draw called with:", { x, y, pressure, isDrawing, currentPathLength: currentPath.length })
@@ -543,9 +561,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
         return
       }
 
-      // 修复：确保在绘制状态下或当前路径有内容时继续绘制
-      if (!isDrawing && currentPath.length === 0) {
-        console.log("[DrawingCanvas] Draw skipped - not drawing and no current path")
+      // 修复：只有在绘制状态下才添加点
+      if (!isDrawing) {
+        console.log("[DrawingCanvas] Draw skipped - not in drawing state")
         return
       }
 
@@ -556,10 +574,10 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
         return newPath
       })
     },
-    [isDrawing, currentPath, tool, isPanning, lastPanPoint],
+    [isDrawing, tool, isPanning, lastPanPoint],
   )
 
-  // 修复：优化stopDrawing方法，确保路径能正确完成
+  // 修复：优化stopDrawing方法，确保路径正确完成
   const stopDrawing = useCallback(() => {
     console.log("[DrawingCanvas] stopDrawing called with:", { isDrawing, currentPathLength: currentPath.length, tool })
     
@@ -569,9 +587,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({
       return
     }
 
-    // 修复：即使isDrawing为false，如果有currentPath也要完成绘制
-    if (currentPath.length === 0) {
-      console.log("[DrawingCanvas] Stop drawing skipped - no current path")
+    // 修复：只有在绘制状态下且有路径时才完成绘制
+    if (!isDrawing || currentPath.length === 0) {
+      console.log("[DrawingCanvas] Stop drawing skipped - not drawing or no current path")
       return
     }
 
